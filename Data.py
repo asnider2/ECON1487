@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
-from sklearn.impute import SimpleImputer
 import re
 
 # Importing data into dataframe
@@ -119,16 +118,16 @@ shoe_data['size_numeric'] = shoe_data['sizes'].apply(lambda x: re.search(r'\d+',
 shoe_data['size_numeric'] = pd.to_numeric(shoe_data['size_numeric'], errors='coerce')
 
 # Specify the columns for regression
-columns_for_regression = ['men', 'material_category', 'gender', 'pricesamountmin', 'size_numeric']
+columns_for_regression = ['gender', 'material_category', 'pricesamountmin', 'size_numeric']
 
 # Filtering the DataFrame
 regression_data = shoe_data[columns_for_regression]
 
 # Drop rows with NaN values in the target variable
-regression_data = regression_data.dropna(subset=['pricesamountmin'])
+regression_data = regression_data.dropna()
 
-# Mapping the gender column
-regression_data['gender'] = regression_data['gender'].map({'men': 1, 'women': 0})
+# One-hot encoding for 'gender'
+regression_data = pd.get_dummies(regression_data, columns=['gender'], prefix='gender', drop_first=True)
 
 # Handling categorical variables (material_category)
 regression_data = pd.get_dummies(regression_data, columns=['material_category'], dummy_na=True)
@@ -137,12 +136,8 @@ regression_data = pd.get_dummies(regression_data, columns=['material_category'],
 X = regression_data.drop('pricesamountmin', axis=1)
 y = regression_data['pricesamountmin']
 
-# Impute missing values with mean
-imputer = SimpleImputer(strategy='mean')
-X_imputed = imputer.fit_transform(X)
-
-# Splitting the data into training and testing sets with imputed data
-X_train, X_test, y_train, y_test = train_test_split(X_imputed, y, test_size=0.2, random_state=42)
+# Splitting the data into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 # Creating a linear regression model
 model = LinearRegression()
@@ -150,39 +145,69 @@ model = LinearRegression()
 # Fitting the model
 model.fit(X_train, y_train)
 
+# Get the coefficients
+coefficients = pd.DataFrame({'Variable': X.columns, 'Coefficient': model.coef_})
+
+# Print the coefficients
+print("Coefficients:")
+print(coefficients)
+
 # Predict prices on the test set
 y_pred = model.predict(X_test)
+
+# Print columns of X_test to check the correct column names
+print("Columns of X_test:", X_test.columns)
 
 # Compare predicted prices for men and women
 predicted_prices = pd.DataFrame({
     'Actual': y_test,
     'Predicted': y_pred,
-    'Gender': X_test[:, columns_for_regression.index('gender')],  # Extract gender column from X_test
-    'Size': X_test[:, columns_for_regression.index('size_numeric')]  # Extract size_numeric column from X_test
+    'Gender': X_test[X_test.filter(like='gender').columns[0]],  # Dynamic column selection
+    'Size': X_test['size_numeric']
 })
 
+# Print columns of X_test to check the correct column names
+print("Columns of X_test:", X_test.columns)
+
+# Convert 'Gender' column to numeric for indexing
+predicted_prices['Gender'] = pd.to_numeric(predicted_prices['Gender'], errors='coerce')
+
 # Visualize the predicted prices for men and women in a scatter plot
-plt.figure(figsize=(18, 6))
+plt.figure(figsize=(15, 6))
 
 # Scatter plot for gender
 plt.subplot(1, 3, 1)
-sns.scatterplot(x='Actual', y='Predicted', hue='Gender', data=predicted_prices)
+sns.scatterplot(x='Actual', y='Predicted', hue='Gender', style='Gender', data=predicted_prices)
 plt.title('Scatter Plot for Gender')
 plt.xlabel('Actual Prices')
 plt.ylabel('Predicted Prices')
 
-# Line graph for sizes
+# Bar plot for coefficients
 plt.subplot(1, 3, 2)
-sns.lineplot(x='Size', y='Predicted', data=predicted_prices)
-plt.title('Line Graph for Size')
-plt.xlabel('Size')
-plt.ylabel('Predicted Prices')
+sns.lineplot(x='Coefficient', y='Variable', data=coefficients)  # Use lineplot instead of barplot
+plt.title('Coefficients')
+plt.xlabel('Coefficient Value')
 
-# Line graph for gender
-plt.subplot(1, 3, 3)
-sns.lineplot(x='Gender', y='Predicted', data=predicted_prices)
-plt.title('Line Graph for Gender')
-plt.xlabel('Gender')
+# Group size categories into ranges
+size_ranges = pd.cut(predicted_prices['Size'], bins=[0, 2, 5, 8, 11, 14], labels=['0-2', '3-5', '6-8', '9-11', '12-14'])
+
+# Update the 'Size' column with the grouped size ranges
+predicted_prices['Size'] = size_ranges
+
+# Sort the DataFrame based on the grouped size ranges
+predicted_prices.sort_values(by=['Size', 'Gender'], inplace=True)
+
+# Aggregate the data by taking the mean of predicted prices for each group
+predicted_prices_agg = predicted_prices.groupby(['Size', 'Gender']).mean().reset_index()
+
+# Line graph for sizes
+plt.figure(figsize=(15, 6))
+
+# Line graph for sizes and gender
+plt.subplot(1, 3, 1)
+sns.lineplot(x='Size', y='Predicted', hue='Gender', data=predicted_prices_agg)
+plt.title('Line Graph for Size and Gender')
+plt.xlabel('Size Range')
 plt.ylabel('Predicted Prices')
 
 plt.tight_layout()
